@@ -1,0 +1,133 @@
+---
+title: "Initial EDA: Online Shoppers Purchasing Intention"
+output: html_document
+---
+
+## Question and data
+
+Is product-page browsing time associated with purchase differently for new and returning visitors? This initial report checks the data and describes observed patterns. It does not test the hypothesis or establish causation. Source: [UCI dataset 468](https://archive.ics.uci.edu/dataset/468/online).
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 7, fig.height = 4.5)
+d <- read.csv("data/online_shoppers_intention.csv")
+stopifnot(nrow(d) == 12330L, ncol(d) == 18L)
+```
+
+## Overall checks
+
+```{r overall}
+cat("Sessions:", nrow(d), "\nVariables:", ncol(d),
+    "\nMissing cells:", sum(is.na(d)),
+    "\nPurchases:", sum(d$Revenue),
+    "\nPurchase rate:", sprintf("%.1f%%", 100 * mean(d$Revenue)),
+    "\nZero product-page duration:",
+    sum(d$ProductRelated_Duration == 0),
+    sprintf("(%.1f%%)", 100 * mean(d$ProductRelated_Duration == 0)), "\n")
+```
+
+## Quantitative variables
+
+Counts, center, and spread are on the original scales. Duration is skewed, so median and IQR should be read alongside mean and SD. `PageValues` is inspected here but is not a planned model predictor because its definition involves transaction value.
+
+```{r quantitative}
+quantitative <- c("Administrative", "Administrative_Duration", "Informational",
+                  "Informational_Duration", "ProductRelated",
+                  "ProductRelated_Duration", "BounceRates", "ExitRates",
+                  "PageValues", "SpecialDay")
+quant_summary <- do.call(rbind, lapply(quantitative, function(name) {
+  x <- d[[name]]
+  data.frame(Variable = name, Missing = sum(is.na(x)),
+             Non_missing = sum(!is.na(x)), Mean = mean(x, na.rm = TRUE),
+             Median = median(x, na.rm = TRUE), SD = sd(x, na.rm = TRUE),
+             IQR = IQR(x, na.rm = TRUE))
+}))
+knitr::kable(quant_summary, digits = 3)
+```
+
+## Categorical variables
+
+Operating system, browser, region, and traffic type are numeric *codes* and are treated as categories. The first table reports missingness; the second lists observed levels and counts.
+
+```{r categorical}
+categorical <- c("Revenue", "VisitorType", "Month", "Weekend",
+                 "TrafficType", "OperatingSystems", "Browser", "Region")
+cat_missing <- do.call(rbind, lapply(categorical, function(name) {
+  x <- d[[name]]
+  data.frame(Variable = name, Missing = sum(is.na(x)),
+             Non_missing = sum(!is.na(x)))
+}))
+knitr::kable(cat_missing)
+
+cat_levels <- do.call(rbind, lapply(categorical, function(name) {
+  counts <- table(d[[name]], useNA = "ifany")
+  data.frame(Variable = name, Level = names(counts), Count = as.integer(counts))
+}))
+knitr::kable(cat_levels)
+```
+
+## Visitor groups and analysis sample
+
+The full-sample counts above include `Other`. The planned comparison uses only new and returning visitors, so the following tables show the exclusion explicitly.
+
+```{r visitor-sample}
+knitr::kable(as.data.frame(table(d$VisitorType)),
+             col.names = c("Visitor type", "Sessions"))
+analysis <- subset(d, VisitorType %in% c("New_Visitor", "Returning_Visitor"))
+stopifnot(nrow(analysis) == 12245L)
+cat("Analysis sessions:", nrow(analysis),
+    "\nExcluded Other sessions:", nrow(d) - nrow(analysis), "\n")
+visitor_summary <- do.call(rbind, lapply(split(analysis, analysis$VisitorType),
+                                        function(group) {
+  data.frame(VisitorType = group$VisitorType[1], Sessions = nrow(group),
+             Purchases = sum(group$Revenue), Purchase_rate = mean(group$Revenue),
+             Median_duration = median(group$ProductRelated_Duration),
+             Zero_duration = sum(group$ProductRelated_Duration == 0),
+             Zero_duration_share = mean(group$ProductRelated_Duration == 0))
+}))
+knitr::kable(visitor_summary, digits = 3)
+```
+
+```{r duration-plot, echo=FALSE}
+boxplot(log1p(ProductRelated_Duration) ~ VisitorType, data = analysis,
+        col = c("#85B6D9", "#E5A568"), xlab = "Visitor type",
+        ylab = "log(1 + product-page duration)",
+        main = "Browsing duration by visitor type")
+```
+
+## Observed purchase rates across duration
+
+Zero duration is a separate group. Positive durations are split at their quartiles in the two-visitor analysis sample. These bins describe the data; differences in rates do not test the proposed log-odds interaction.
+
+```{r duration-bins}
+positive <- analysis$ProductRelated_Duration[analysis$ProductRelated_Duration > 0]
+cuts <- as.numeric(quantile(positive, c(.25, .50, .75)))
+stopifnot(length(unique(cuts)) == 3L)
+analysis$Duration_group <- cut(
+  analysis$ProductRelated_Duration, breaks = c(-Inf, 0, cuts, Inf),
+  labels = c("Zero", "Positive Q1", "Positive Q2", "Positive Q3", "Positive Q4"))
+rate_table <- aggregate(as.integer(analysis$Revenue),
+  by = list(VisitorType = analysis$VisitorType,
+            Duration_group = analysis$Duration_group),
+  FUN = function(x) c(Sessions = length(x), Purchases = sum(x),
+                      Purchase_rate = mean(x)))
+rate_table <- data.frame(rate_table[1:2], rate_table$x, row.names = NULL)
+knitr::kable(rate_table, digits = 3)
+```
+
+```{r rate-plot, echo=FALSE}
+rates <- xtabs(Purchase_rate ~ Duration_group + VisitorType, data = rate_table)
+matplot(seq_len(nrow(rates)), rates, type = "b", pch = c(16, 17),
+        lty = 1, col = c("#2077A5", "#BD6C2F"), xaxt = "n",
+        xlab = "Product-page duration group", ylab = "Observed purchase rate",
+        main = "Observed purchase rates by visitor type")
+axis(1, at = seq_len(nrow(rates)), labels = rownames(rates))
+legend("topleft", legend = colnames(rates), pch = c(16, 17),
+       lty = 1, col = c("#2077A5", "#BD6C2F"), bty = "n")
+```
+
+## Next checks
+
+- Compare product-page count with duration before deciding whether to include both in a model.
+- Keep full and filtered sample sizes distinct in later reporting.
+- The data have no user ID with which to verify user-level independence.

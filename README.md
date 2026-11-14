@@ -1,2 +1,16 @@
-# online-shoppers-purchase-analysis
-Analysis of browsing engagement and purchase conversion across visitor types.
+# Online shoppers: browsing and purchase conversion
+
+Group project exploring whether the association between product-page browsing time and purchase differs for new and returning visitors. This is an initial descriptive EDA; the planned logistic regression is a later step.
+
+## Run the EDA
+
+Open `eda.Rmd` in RStudio and click **Knit**, or run from the repository root:
+
+```r
+install.packages(c("rmarkdown", "knitr")) # only if needed
+rmarkdown::render("eda.Rmd", output_file = "eda.html")
+```
+
+The report reads `data/online_shoppers_intention.csv`. It summarizes missingness, center, variability, categorical levels and frequencies, zero browsing durations, visitor groups, and descriptive purchase rates. The report uses the original full sample for data-quality tables and clearly identifies the sample after excluding the `Other` visitor type.
+
+The [group proposal](https://docs.google.com/document/d/1fuHlRmEPYQq1Zvb7D94DZxCQpCXNZKgZl3D_x3Gcfjk/edit?tab=t.0) describes the later model. Data provenance and attribution are in [data/README.md](data/README.md).
