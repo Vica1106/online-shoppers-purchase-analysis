@@ -97,7 +97,7 @@ boxplot(log1p(ProductRelated_Duration) ~ VisitorType, data = analysis,
 
 ## Observed purchase rates across duration
 
-Zero duration is a separate group. Positive durations are split at their quartiles in the two-visitor analysis sample. These bins describe the data; differences in rates do not test the proposed log-odds interaction.
+Zero duration is a separate group. The positive-duration cutpoints are the 25th, 50th, and 75th percentiles after pooling new and returning visitors with positive durations. Bounds are shown on the original data scale and rounded for display. For each visitor type and bin, the table and plot report the observed purchase rate with a pointwise 95% [Wilson score interval](https://www.itl.nist.gov/div898/handbook/prc/section2/prc241.htm). These summaries describe the observed rates. The proposed log-odds interaction requires a model-based test.
 
 ```{r duration-bins}
 positive <- analysis$ProductRelated_Duration[analysis$ProductRelated_Duration > 0]
@@ -112,22 +112,88 @@ rate_table <- aggregate(as.integer(analysis$Revenue),
   FUN = function(x) c(Sessions = length(x), Purchases = sum(x),
                       Purchase_rate = mean(x)))
 rate_table <- data.frame(rate_table[1:2], rate_table$x, row.names = NULL)
-knitr::kable(rate_table, digits = 3)
+
+cut_labels <- formatC(cuts, format = "f", digits = 2)
+duration_bounds <- c("= 0", paste0("(0, ", cut_labels[1], "]"),
+                     paste0("(", cut_labels[1:2], ", ", cut_labels[2:3], "]"),
+                     paste0("> ", cut_labels[3]))
+rate_table$Duration_bounds <- duration_bounds[as.integer(rate_table$Duration_group)]
+```
+
+```{r wilson-intervals, echo=FALSE}
+z <- qnorm(0.975)
+n <- rate_table$Sessions
+p <- rate_table$Purchase_rate
+denominator <- 1 + z^2 / n
+center <- (p + z^2 / (2 * n)) / denominator
+half_width <- z * sqrt(p * (1 - p) / n + z^2 / (4 * n^2)) / denominator
+rate_table$Wilson_lower <- center - half_width
+rate_table$Wilson_upper <- center + half_width
+
+knitr::kable(data.frame(
+  "Visitor type" = rate_table$VisitorType,
+  "Bin" = rate_table$Duration_group,
+  "Duration bounds" = rate_table$Duration_bounds,
+  "Sessions" = n, "Purchases" = rate_table$Purchases,
+  "Purchase rate" = sprintf("%.1f%%", 100 * p),
+  "Wilson 95% CI" = sprintf("%.1f%% to %.1f%%", 100 * rate_table$Wilson_lower,
+                            100 * rate_table$Wilson_upper),
+  check.names = FALSE
+))
 ```
 
 ```{r rate-plot, echo=FALSE}
-rates <- xtabs(Purchase_rate ~ Duration_group + VisitorType, data = rate_table)
-matplot(seq_len(nrow(rates)), rates, type = "b", pch = c(16, 17),
-        lty = 1, col = c("#2077A5", "#BD6C2F"), xaxt = "n",
-        xlab = "Product-page duration group", ylab = "Observed purchase rate",
-        main = "Observed purchase rates by visitor type")
-axis(1, at = seq_len(nrow(rates)), labels = rownames(rates))
-legend("topleft", legend = colnames(rates), pch = c(16, 17),
-       lty = 1, col = c("#2077A5", "#BD6C2F"), bty = "n")
+bin_labels <- levels(rate_table$Duration_group)
+plot_colors <- c("#2077A5", "#BD6C2F")
+plot_symbols <- c(16, 17)
+visitor_rates <- split(rate_table, rate_table$VisitorType)
+y_ticks <- pretty(c(0, rate_table$Wilson_upper))
+plot(NA, xlim = c(0.75, length(bin_labels) + 0.25), ylim = range(y_ticks),
+     xaxt = "n", yaxt = "n", xlab = "Product-page duration group",
+     ylab = "Observed purchase rate", main = "Purchase rates with Wilson 95% intervals")
+axis(1, at = seq_along(bin_labels), labels = bin_labels)
+axis(2, at = y_ticks, labels = paste0(100 * y_ticks, "%"), las = 1)
+for (i in seq_along(visitor_rates)) {
+  group <- visitor_rates[[i]]
+  # Offset the two groups so both intervals are visible within each bin.
+  x <- as.integer(group$Duration_group) + c(-0.09, 0.09)[i]
+  arrows(x, group$Wilson_lower, x, group$Wilson_upper, angle = 90,
+         code = 3, length = 0.04, col = plot_colors[i])
+  lines(x, group$Purchase_rate, type = "b", pch = plot_symbols[i], col = plot_colors[i])
+}
+legend("topleft", legend = names(visitor_rates), pch = plot_symbols,
+       lty = 1, col = plot_colors, bty = "n")
+```
+
+## Product-page count and browsing duration
+
+The following checks use the same new- and returning-visitor analysis sample. The table cross-tabulates zero versus positive page counts and durations. Spearman's rank correlation summarizes their monotonic association on the original scales.
+
+```{r count-duration}
+count_duration <- with(analysis, table(
+  "Product pages" = factor(ProductRelated > 0, labels = c("Zero pages", "One or more pages")),
+  "Duration" = factor(ProductRelated_Duration > 0,
+                      labels = c("Zero duration", "Positive duration"))
+))
+knitr::kable(as.data.frame.matrix(count_duration), row.names = TRUE)
+
+zero_duration_with_pages <- count_duration["One or more pages", "Zero duration"]
+total_zero_duration <- sum(count_duration[, "Zero duration"])
+count_duration_rho <- with(analysis, cor(ProductRelated, ProductRelated_Duration,
+                                         method = "spearman"))
+```
+
+Of the `r total_zero_duration` sessions with zero recorded duration, `r zero_duration_with_pages` (`r sprintf("%.1f%%", 100 * zero_duration_with_pages / total_zero_duration)`) recorded at least one product page. The count-duration Spearman correlation is `r sprintf("%.3f", count_duration_rho)`. This association motivates comparing duration-only and count-adjusted models before deciding whether to retain both predictors.
+
+```{r count-duration-plot, echo=FALSE}
+with(analysis, plot(log1p(ProductRelated), log1p(ProductRelated_Duration),
+                    pch = 16, cex = 0.45, col = adjustcolor("#2077A5", alpha.f = 0.18),
+                    xlab = "log(1 + product-page count)",
+                    ylab = "log(1 + product-page duration)",
+                    main = "Product-page count and browsing duration"))
 ```
 
 ## Next checks
 
-- Compare product-page count with duration before deciding whether to include both in a model.
 - Keep full and filtered sample sizes distinct in later reporting.
 - The data have no user ID with which to verify user-level independence.
