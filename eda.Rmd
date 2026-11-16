@@ -193,6 +193,15 @@ with(analysis, plot(log1p(ProductRelated), log1p(ProductRelated_Duration),
                     main = "Product-page count and browsing duration"))
 ```
 
+## Hypothesis and baseline model
+
+Among new and returning visitors, the association between product-page browsing duration and purchase may differ by visitor type. On the log-odds scale, the null hypothesis is that the interaction coefficient is zero (equal slopes for the two visitor types). The two-sided alternative is that the interaction coefficient is nonzero (different slopes).
+
+- **Baseline logistic regression** — `Revenue ~ log1p(ProductRelated_Duration) + VisitorType`
+- **Interaction model** — `Revenue ~ log1p(ProductRelated_Duration) * VisitorType`
+
+Both models will use the same 12,245 sessions and treat returning visitors as the reference group. The planned likelihood-ratio test compares the two nested models with one degree of freedom.
+
 ## Next checks
 
 - Keep full and filtered sample sizes distinct in later reporting.

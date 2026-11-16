@@ -13,4 +13,6 @@ rmarkdown::render("eda.Rmd", output_file = "eda.html")
 
 The report reads `data/online_shoppers_intention.csv`. It summarizes missingness, center, variability, categorical levels and frequencies, zero browsing durations, visitor groups, and descriptive purchase rates. The report uses the original full sample for data-quality tables and clearly identifies the sample after excluding the `Other` visitor type.
 
+Added duration bin boundaries, Wilson 95% intervals, a page count–duration check, and the interaction hypothesis and baseline model. (Yichao Zhou, 11/15) [View the PDF](eda.pdf).
+
 The [group proposal](https://docs.google.com/document/d/1fuHlRmEPYQq1Zvb7D94DZxCQpCXNZKgZl3D_x3Gcfjk/edit?tab=t.0) describes the later model. Data provenance and attribution are in [data/README.md](data/README.md).
