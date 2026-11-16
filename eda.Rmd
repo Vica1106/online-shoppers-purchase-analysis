@@ -195,12 +195,11 @@ with(analysis, plot(log1p(ProductRelated), log1p(ProductRelated_Duration),
 
 ## Hypothesis and baseline model
 
-Among new and returning visitors, the association between product-page browsing duration and purchase may differ by visitor type. On the log-odds scale, the null hypothesis is that the interaction coefficient is zero (equal slopes for the two visitor types). The two-sided alternative is that the interaction coefficient is nonzero (different slopes).
+After adjusting for the controls below, the null hypothesis is that new and returning visitors have the same slope of `log1p(ProductRelated_Duration)` on purchase log-odds (interaction coefficient = 0). The two-sided alternative is that the slopes differ (interaction coefficient is nonzero).
 
-- **Baseline logistic regression** — `Revenue ~ log1p(ProductRelated_Duration) + VisitorType`
-- **Interaction model** — `Revenue ~ log1p(ProductRelated_Duration) * VisitorType`
+The baseline logistic regression models `Revenue` using `log1p(ProductRelated_Duration)` and `VisitorType`, controlling for `Month`, `Weekend`, and `TrafficType` (with very sparse traffic categories pooled). We include the product-page count (`ProductRelated`) in the main model if its VIF with log duration is below 5. Otherwise, we include it in a sensitivity model.
 
-Both models will use the same 12,245 sessions and treat returning visitors as the reference group. The planned likelihood-ratio test compares the two nested models with one degree of freedom.
+The interaction model adds `VisitorType:log1p(ProductRelated_Duration)`. Both models use the same 12,245 sessions, with returning visitors as the reference group. Both models include any retained quadratic log-duration term or zero-duration indicator. We will compare the models using a one-degree-of-freedom likelihood-ratio test and supplement it with a parametric bootstrap under the fitted model without the interaction.
 
 ## Next checks
 
