@@ -1,11 +1,19 @@
 ---
 title: "Initial EDA: Online Shoppers Purchasing Intention"
-output: html_document
+output:
+  pdf_document:
+    df_print: kable
+  html_document: default
+header-includes:
+  - \usepackage{fvextra}
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
 ---
 
 ## Question and data
 
 Is product-page browsing time associated with purchase differently for new and returning visitors? This initial report checks the data and describes observed patterns. It does not test the hypothesis or establish causation. Source: [UCI dataset 468](https://archive.ics.uci.edu/dataset/468/online).
+
+Each row is one browsing session on an online retail site, collected over one year (Sakar et al., 2019). The 18 variables are page counts and seconds spent on administrative, informational, and product pages, Google Analytics bounce/exit rates and page values, the month, a weekend flag, technical and traffic codes, and visitor type. The outcome `Revenue` records whether the session ended in a purchase.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
@@ -25,6 +33,23 @@ cat("Sessions:", nrow(d), "\nVariables:", ncol(d),
     sum(d$ProductRelated_Duration == 0),
     sprintf("(%.1f%%)", 100 * mean(d$ProductRelated_Duration == 0)), "\n")
 ```
+
+## Data quality
+
+```{r data-quality}
+dup <- duplicated(d) | duplicated(d, fromLast = TRUE)
+cat("Exact duplicate rows:", sum(duplicated(d)),
+    "\nRows in duplicate groups:", sum(dup),
+    "\nProduct pages in those rows:", paste(sort(unique(d$ProductRelated[dup])), collapse = ", "),
+    "\nMax product duration in those rows:", max(d$ProductRelated_Duration[dup]),
+    "\nPurchases in those rows:", sum(d$Revenue[dup]),
+    "\nNegative durations:", sum(d[grep("_Duration", names(d))] < 0),
+    "\nLongest product-page duration (hours):",
+    round(max(d$ProductRelated_Duration) / 3600, 1),
+    "\nSessions over 5 hours:", sum(d$ProductRelated_Duration > 5 * 3600), "\n")
+```
+
+There are no missing values or negative durations. The duplicated rows are all one- or two-page bounces with zero duration and no purchase, so with this few variables different sessions can look identical; we keep them. A few product-page durations run to many hours, which likely means a tab left open; we keep them because the model uses log duration, and we will check their influence with Cook's distance.
 
 ## Quantitative variables
 
@@ -85,7 +110,9 @@ visitor_summary <- do.call(rbind, lapply(split(analysis, analysis$VisitorType),
              Zero_duration = sum(group$ProductRelated_Duration == 0),
              Zero_duration_share = mean(group$ProductRelated_Duration == 0))
 }))
-knitr::kable(visitor_summary, digits = 3)
+knitr::kable(visitor_summary, digits = 3, row.names = FALSE,
+             col.names = c("Visitor type", "Sessions", "Purchases", "Purchase rate",
+                           "Median duration", "Zero duration", "Zero share"))
 ```
 
 ```{r duration-plot, echo=FALSE}
@@ -197,9 +224,37 @@ with(analysis, plot(log1p(ProductRelated), log1p(ProductRelated_Duration),
 
 After adjusting for the controls below, the null hypothesis is that new and returning visitors have the same slope of `log1p(ProductRelated_Duration)` on purchase log-odds (interaction coefficient = 0). The two-sided alternative is that the slopes differ (interaction coefficient is nonzero).
 
-The baseline logistic regression models `Revenue` using `log1p(ProductRelated_Duration)` and `VisitorType`, controlling for `Month`, `Weekend`, and `TrafficType` (with very sparse traffic categories pooled). We include the product-page count (`ProductRelated`) in the main model if its VIF with log duration is below 5. Otherwise, we include it in a sensitivity model.
+The baseline logistic regression models `Revenue` using `log1p(ProductRelated_Duration)` and `VisitorType`, controlling for `Month`, `Weekend`, and `TrafficType`. Traffic types with fewer than 50 sessions in the analysis sample are pooled into one level. The proposal kept the product-page count (`ProductRelated`) only if its VIF with log duration is below 5; both GVIFs below are about 1.8, so it stays in the main model.
 
-The interaction model adds `VisitorType:log1p(ProductRelated_Duration)`. Both models use the same 12,245 sessions, with returning visitors as the reference group. Both models include any retained quadratic log-duration term or zero-duration indicator. We will compare the models using a one-degree-of-freedom likelihood-ratio test and supplement it with a parametric bootstrap under the fitted model without the interaction.
+With $D_i$ the product-page duration, $\text{New}_i$ an indicator for new visitors, and $P_i$ the product-page count, the baseline model is
+$$\text{logit}\,\Pr(\text{Revenue}_i = 1) = \beta_0 + \beta_1 \log(1 + D_i) + \beta_2 \text{New}_i + \beta_3 P_i + \text{Month}_i + \text{Weekend}_i + \text{Traffic}_i,$$
+where the last three terms stand for the dummy-coded control effects. The interaction model adds $\beta_4 \text{New}_i \log(1 + D_i)$, and $H_0: \beta_4 = 0$ versus $H_A: \beta_4 \neq 0$.
+
+```{r baseline-model}
+analysis$VisitorType <- relevel(factor(analysis$VisitorType), ref = "Returning_Visitor")
+analysis$Month <- factor(analysis$Month)
+traffic_n <- table(analysis$TrafficType)
+sparse_traffic <- names(traffic_n)[traffic_n < 50]
+analysis$Traffic <- factor(ifelse(analysis$TrafficType %in% sparse_traffic,
+                                  "Pooled", analysis$TrafficType))
+cat("Pooled traffic types:", sparse_traffic,
+    "\nSessions pooled:", sum(analysis$Traffic == "Pooled"),
+    "\nPurchases pooled:", sum(analysis$Revenue[analysis$Traffic == "Pooled"]), "\n")
+
+baseline <- glm(Revenue ~ log1p(ProductRelated_Duration) + VisitorType +
+                  ProductRelated + Month + Weekend + Traffic,
+                family = binomial, data = analysis)
+car::vif(baseline)
+
+main_terms <- c("log1p(ProductRelated_Duration)", "VisitorTypeNew_Visitor", "ProductRelated")
+or_table <- exp(cbind(OR = coef(baseline), confint.default(baseline)))[main_terms, ]
+knitr::kable(cbind(or_table, p_value = summary(baseline)$coefficients[main_terms, 4]),
+             digits = 3, col.names = c("Odds ratio", "2.5%", "97.5%", "p-value"))
+```
+
+These odds ratios are adjusted associations from the baseline model, not the test of $H_0$.
+
+Both models use the same 12,245 sessions, with returning visitors as the reference group. Both models include any retained quadratic log-duration term or zero-duration indicator. We will compare the models using a one-degree-of-freedom likelihood-ratio test and supplement it with a parametric bootstrap under the fitted model without the interaction.
 
 ## Next checks
 
