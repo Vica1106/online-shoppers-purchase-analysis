@@ -59,11 +59,11 @@ cat("Exact duplicate rows:", sum(duplicated(d)),
     sum(d$ExitRates == 0.2), "\n")
 ```
 
-There are no missing values or negative durations. The duplicated rows are all one- or two-page bounces with zero duration and no purchase; with this few variables, different sessions can look identical, so we keep them. The longest sessions have hundreds of product pages and the average time per product page never exceeds about 24 minutes, so we keep them and will check their influence with Cook's distance.
+There are no missing values or negative durations. The duplicated rows are all one- or two-page bounces with zero duration and no purchase; with this few variables, different sessions can look identical, so we keep them. Some sessions have hundreds of product pages. We retain the long sessions for this descriptive report and will check their influence on the fitted model with Cook's distance.
 
-UCI says durations are updated when the visitor moves to another page, so the last page adds no time and most zero-duration sessions are one-page visits. Zero duration therefore means a short visit rather than no browsing, which is why we will test a zero-duration indicator.
+UCI says durations are updated when the visitor moves to another page, so the last page adds no recorded time. A zero duration does not necessarily mean no product browsing or a short visit; it means no product-page time was recorded. We therefore show zero durations separately and plan to assess a zero-duration indicator in the model.
 
-Six sessions record no pages of any type, and six purchases have no product pages; we keep these 12 rows because they are too few to affect the fit. Bounce and exit rates never exceed 0.2 and pile up at that value, which looks like a cap, but neither is in our model. `Month` has no January or April sessions and spells out "June"; the model recodes it to "Jun" and orders months by calendar.
+Six sessions record no pages of any type, and six purchases have no product pages. We retain these records for now and will compare results with and without them as a sensitivity check. Bounce and exit rates never exceed 0.2 and pile up at that value, which looks like a cap, but neither is in our model. `Month` has no January or April sessions and spells out "June"; the model recodes it to "Jun" and orders months by calendar.
 
 ## Quantitative variables
 
@@ -206,6 +206,17 @@ legend("topleft", legend = names(visitor_rates), pch = plot_symbols,
        lty = 1, col = plot_colors, bty = "n")
 ```
 
+```{r rate-description, include=FALSE}
+new_rates <- subset(rate_table, VisitorType == "New_Visitor")
+returning_rates <- subset(rate_table, VisitorType == "Returning_Visitor")
+stopifnot(identical(as.character(new_rates$Duration_group),
+                    as.character(returning_rates$Duration_group)))
+q4_gap_pp <- 100 * (tail(new_rates$Purchase_rate, 1) -
+                      tail(returning_rates$Purchase_rate, 1))
+```
+
+In the zero-duration group, the observed purchase rate is `r sprintf("%.1f%%", 100 * new_rates$Purchase_rate[1])` for new visitors and `r sprintf("%.1f%%", 100 * returning_rates$Purchase_rate[1])` for returning visitors. In the highest positive-duration quartile, the corresponding rates are `r sprintf("%.1f%%", 100 * tail(new_rates$Purchase_rate, 1))` and `r sprintf("%.1f%%", 100 * tail(returning_rates$Purchase_rate, 1))`; their difference (new minus returning) is `r sprintf("%+.1f", q4_gap_pp)` percentage points. The intervening bins and their sample sizes are shown in the table. These are unadjusted comparisons across pooled duration bins, so apparent differences do not establish a difference in the adjusted log-odds slopes.
+
 ## Product-page count and browsing duration
 
 The following checks use the same new- and returning-visitor analysis sample. The table cross-tabulates zero versus positive page counts and durations. Spearman's rank correlation summarizes their monotonic association on the original scales.
@@ -271,7 +282,11 @@ These odds ratios are adjusted associations from the baseline model, not the tes
 
 Both models use the same 12,245 sessions, with returning visitors as the reference group. Both models include any retained quadratic log-duration term or zero-duration indicator. We will compare the models using a one-degree-of-freedom likelihood-ratio test and supplement it with a parametric bootstrap under the fitted model without the interaction.
 
-## Next checks
+## EDA takeaway and next checks
+
+The descriptive table and plot show how observed purchase rates vary across product-page duration groups for each visitor type. The baseline odds ratios are adjusted associations, but they do not answer whether the duration association differs by visitor type. That question requires the planned interaction model and its likelihood-ratio test; neither the binwise Wilson intervals nor their overlap is a test of the interaction.
 
 - Keep full and filtered sample sizes distinct in later reporting.
+- Check whether long-duration sessions and the 12 unusual page-count records materially affect the interaction estimate.
+- Assess the functional form of duration and page count before interpreting a one-unit slope; use the same retained terms in models with and without the interaction.
 - The data have no user ID with which to verify user-level independence.
