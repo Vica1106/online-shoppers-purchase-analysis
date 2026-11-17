@@ -61,7 +61,7 @@ cat("Exact duplicate rows:", sum(duplicated(d)),
 
 There are no missing values or negative durations. The duplicated rows are all one- or two-page bounces with zero duration and no purchase; with this few variables, different sessions can look identical, so we keep them. Some sessions have hundreds of product pages. We retain the long sessions for this descriptive report and will check their influence on the fitted model with Cook's distance.
 
-UCI says durations are updated when the visitor moves to another page, so the last page adds no recorded time. A zero duration does not necessarily mean no product browsing or a short visit; it means no product-page time was recorded. We therefore show zero durations separately and plan to assess a zero-duration indicator in the model.
+UCI says durations are updated when the visitor moves to another page, so the last page adds no recorded time. Of the `r sum(d$ProductRelated_Duration == 0)` zero-duration sessions, `r sum(d$ProductRelated == 1 & d$ProductRelated_Duration == 0)` viewed exactly one product page, consistent with the last page not being timed. A zero duration therefore means that no product-page time was recorded, usually in a single-page visit; it does not mean that no product page was viewed. We show zero durations separately and plan to assess a zero-duration indicator in the model.
 
 Six sessions record no pages of any type, and six purchases have no product pages. We retain these records for now and will compare results with and without them as a sensitivity check. Bounce and exit rates never exceed 0.2 and pile up at that value, which looks like a cap, but neither is in our model. `Month` has no January or April sessions and spells out "June"; the model recodes it to "Jun" and orders months by calendar.
 
@@ -138,7 +138,7 @@ boxplot(log1p(ProductRelated_Duration) ~ VisitorType, data = analysis,
 
 ## Observed purchase rates across duration
 
-Zero duration is a separate group. The positive-duration cutpoints are the 25th, 50th, and 75th percentiles after pooling new and returning visitors with positive durations. Bounds are shown on the original data scale and rounded for display. For each visitor type and bin, the table and plot report the observed purchase rate with a pointwise 95% [Wilson score interval](https://www.itl.nist.gov/div898/handbook/prc/section2/prc241.htm). These summaries describe the observed rates. The proposed log-odds interaction requires a model-based test.
+Zero duration is a separate group. The positive-duration cutpoints are the 25th, 50th, and 75th percentiles after pooling new and returning visitors with positive durations. Bounds are shown on the original data scale and rounded for display. For each visitor type and bin, the table and plot report the observed purchase rate with a pointwise 95% [Wilson score interval](https://www.itl.nist.gov/div898/handbook/prc/section2/prc241.htm).
 
 ```{r duration-bins}
 positive <- analysis$ProductRelated_Duration[analysis$ProductRelated_Duration > 0]
@@ -211,11 +211,32 @@ new_rates <- subset(rate_table, VisitorType == "New_Visitor")
 returning_rates <- subset(rate_table, VisitorType == "Returning_Visitor")
 stopifnot(identical(as.character(new_rates$Duration_group),
                     as.character(returning_rates$Duration_group)))
-q4_gap_pp <- 100 * (tail(new_rates$Purchase_rate, 1) -
-                      tail(returning_rates$Purchase_rate, 1))
+pct <- function(x) sprintf("%.1f%%", 100 * x)
+new_p <- new_rates$Purchase_rate
+ret_p <- returning_rates$Purchase_rate
+stopifnot(all(new_p > 0 & new_p < 1), all(ret_p > 0 & ret_p < 1))
+gap_pp <- 100 * (new_p - ret_p)
+gap_logit <- qlogis(new_p) - qlogis(ret_p)
+# These checks keep the wording below true if the data or bins change.
+stopifnot(all(new_p > ret_p), !is.unsorted(ret_p), which.max(new_p) == 4L,
+          which.max(gap_pp) == 4L, which.max(gap_logit) == 1L,
+          which.min(gap_logit) == 5L)
 ```
 
-In the zero-duration group, the observed purchase rate is `r sprintf("%.1f%%", 100 * new_rates$Purchase_rate[1])` for new visitors and `r sprintf("%.1f%%", 100 * returning_rates$Purchase_rate[1])` for returning visitors. In the highest positive-duration quartile, the corresponding rates are `r sprintf("%.1f%%", 100 * tail(new_rates$Purchase_rate, 1))` and `r sprintf("%.1f%%", 100 * tail(returning_rates$Purchase_rate, 1))`; their difference (new minus returning) is `r sprintf("%+.1f", q4_gap_pp)` percentage points. The intervening bins and their sample sizes are shown in the table. These are unadjusted comparisons across pooled duration bins, so apparent differences do not establish a difference in the adjusted log-odds slopes.
+New visitors have a higher observed purchase rate than returning visitors in every bin. For returning visitors, the rate rises steadily, from `r pct(ret_p[1])` in the zero-duration group to `r pct(ret_p[5])` in Q4. For new visitors, it is similar in the zero-duration group and Q1 (`r pct(new_p[1])` and `r pct(new_p[2])`), rises to `r pct(new_p[4])` in Q3, and then falls to `r pct(new_p[5])` in Q4. Two new-visitor cells are small: the zero-duration group has `r new_rates$Sessions[1]` sessions and `r new_rates$Purchases[1]` purchases (95% CI `r pct(new_rates$Wilson_lower[1])` to `r pct(new_rates$Wilson_upper[1])`), and Q4 has `r new_rates$Sessions[5]` sessions, so these rates are imprecise.
+
+The hypothesis concerns log-odds, so the next table shows the new-minus-returning gap on both scales.
+
+```{r rate-gaps, echo=FALSE}
+knitr::kable(data.frame(
+  "Bin" = as.character(new_rates$Duration_group),
+  "Gap (percentage points)" = sprintf("%+.1f", gap_pp),
+  "Gap (log-odds)" = sprintf("%+.2f", gap_logit),
+  check.names = FALSE
+))
+```
+
+In percentage points, the gap is largest in Q3. In log-odds, it is largest in the zero-duration group and smallest in Q4. The two scales give different impressions, so these unadjusted gaps do not indicate the direction or size of the adjusted interaction. The Q3-to-Q4 decline for new visitors is one reason to assess a quadratic log-duration term.
 
 ## Product-page count and browsing duration
 
@@ -233,9 +254,10 @@ zero_duration_with_pages <- count_duration["One or more pages", "Zero duration"]
 total_zero_duration <- sum(count_duration[, "Zero duration"])
 count_duration_rho <- with(analysis, cor(ProductRelated, ProductRelated_Duration,
                                          method = "spearman"))
+model_scale_r <- with(analysis, cor(ProductRelated, log1p(ProductRelated_Duration)))
 ```
 
-Of the `r total_zero_duration` sessions with zero recorded duration, `r zero_duration_with_pages` (`r sprintf("%.1f%%", 100 * zero_duration_with_pages / total_zero_duration)`) recorded at least one product page. The count-duration Spearman correlation is `r sprintf("%.3f", count_duration_rho)`. This association motivates comparing duration-only and count-adjusted models before deciding whether to retain both predictors.
+Of the `r total_zero_duration` sessions with zero recorded duration, `r zero_duration_with_pages` (`r sprintf("%.1f%%", 100 * zero_duration_with_pages / total_zero_duration)`) recorded at least one product page. The count-duration Spearman correlation is `r sprintf("%.3f", count_duration_rho)`. The model uses log duration and the raw page count, and the Pearson correlation between those two forms is weaker (`r sprintf("%.3f", model_scale_r)`), consistent with the low GVIFs in the next section. The plot puts both variables on the log scale for display only.
 
 ```{r count-duration-plot, echo=FALSE}
 with(analysis, plot(log1p(ProductRelated), log1p(ProductRelated_Duration),
@@ -274,19 +296,34 @@ car::vif(baseline)
 
 main_terms <- c("log1p(ProductRelated_Duration)", "VisitorTypeNew_Visitor", "ProductRelated")
 or_table <- exp(cbind(OR = coef(baseline), confint.default(baseline)))[main_terms, ]
-knitr::kable(cbind(or_table, p_value = summary(baseline)$coefficients[main_terms, 4]),
-             digits = 3, col.names = c("Odds ratio", "2.5%", "97.5%", "p-value"))
+p_values <- summary(baseline)$coefficients[main_terms, 4]
+knitr::kable(data.frame(round(or_table, 3),
+                        format.pval(p_values, digits = 3, eps = 0.001)),
+             col.names = c("Odds ratio", "2.5%", "97.5%", "p-value"))
 ```
 
-These odds ratios are adjusted associations from the baseline model, not the test of $H_0$.
+These odds ratios are adjusted associations from the baseline model, not the test of $H_0$. The duration odds ratio is per one-unit increase in log(1 + seconds); the page-count odds ratio is per additional product page, so a value near 1 is expected.
 
-Both models use the same 12,245 sessions, with returning visitors as the reference group. Both models include any retained quadratic log-duration term or zero-duration indicator. We will compare the models using a one-degree-of-freedom likelihood-ratio test and supplement it with a parametric bootstrap under the fitted model without the interaction.
+Both models use the same 12,245 sessions, with returning visitors as the reference group. If a quadratic log-duration term or a zero-duration indicator is retained, both models will include it. We will compare the models using a one-degree-of-freedom likelihood-ratio test and supplement it with a parametric bootstrap under the fitted model without the interaction.
 
-## EDA takeaway and next checks
+## EDA takeaways and next checks
 
-The descriptive table and plot show how observed purchase rates vary across product-page duration groups for each visitor type. The baseline odds ratios are adjusted associations, but they do not answer whether the duration association differs by visitor type. That question requires the planned interaction model and its likelihood-ratio test; neither the binwise Wilson intervals nor their overlap is a test of the interaction.
+```{r takeaway-values, include=FALSE}
+vs <- split(visitor_summary, visitor_summary$VisitorType)
+long <- analysis$ProductRelated_Duration > 5 * 3600
+n_long <- sum(long)
+stopifnot(all(analysis$VisitorType[long] == "Returning_Visitor"))
+n_no_pages <- with(analysis, sum(Administrative + Informational + ProductRelated == 0))
+n_buy_no_product <- with(analysis, sum(Revenue & ProductRelated == 0))
+```
+
+- New visitors had a higher observed purchase rate than returning visitors (`r pct(vs$New_Visitor$Purchase_rate)` vs `r pct(vs$Returning_Visitor$Purchase_rate)`), despite a shorter median product-page duration (`r round(vs$New_Visitor$Median_duration)` vs `r round(vs$Returning_Visitor$Median_duration)` seconds).
+- Among sessions with recorded time, observed purchase rates rose from Q1 to Q3 in both groups. In Q4 the returning-visitor rate kept rising, while the new-visitor rate fell in a bin with few new-visitor sessions.
+- The new-minus-returning gap is largest in Q3 in percentage points, but in log-odds it is largest at zero duration and smallest in Q4. Whether the slopes differ will be tested with the interaction model and its likelihood-ratio test, not with these bins or overlapping Wilson intervals.
+
+Next checks:
 
 - Keep full and filtered sample sizes distinct in later reporting.
-- Check whether long-duration sessions and the 12 unusual page-count records materially affect the interaction estimate.
+- Check whether the `r n_long` sessions over five hours (all from returning visitors) and the `r n_no_pages + n_buy_no_product` unusual page-count records (`r n_no_pages` sessions with no pages and `r n_buy_no_product` purchases with no product pages) materially affect the interaction estimate.
 - Assess the functional form of duration and page count before interpreting a one-unit slope; use the same retained terms in models with and without the interaction.
 - The data have no user ID with which to verify user-level independence.
